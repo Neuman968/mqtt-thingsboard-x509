@@ -30,7 +30,7 @@ import javax.net.ssl.TrustManagerFactory
 fun main() {
     val broker = "ssl://mqtt.thingsboard.cloud:8883"
 
-
+    // replace file paths with the location of the certificates generated in https://thingsboard.io/docs/pe/user-guide/certificates/
     val privateKeyPEM = File("deviceKey.pem").readText()
     val clientCertPEM = File("chain.pem").readText()
 
@@ -109,12 +109,24 @@ fun main() {
     }
 }
 
+/**
+ * Retrieves the private key from a PEM format.
+ *
+ * @param pem The PEM-formatted private key string.
+ * @return The private key object.
+ */
 fun getPrivateKey(pem: String): PrivateKey {
     val reader = PEMParser(StringReader(pem))
     val converter = JcaPEMKeyConverter().setProvider(BouncyCastleProvider())
     return converter.getPrivateKey(reader.readObject() as PrivateKeyInfo)
 }
 
+/**
+ * Retrieves an X509 certificate from a PEM-encoded string.
+ *
+ * @param pem The PEM-encoded string representing the certificate.
+ * @return The X509 certificate.
+ */
 fun getCertificate(pem: String): X509Certificate {
     val reader = ByteArrayInputStream(pem.toByteArray())
     val cf = CertificateFactory.getInstance("X.509")
