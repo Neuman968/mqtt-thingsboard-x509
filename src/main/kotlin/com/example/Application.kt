@@ -1,13 +1,14 @@
 package com.example
+
+import org.apache.http.ssl.SSLContexts
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.openssl.PEMParser
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter
-import org.eclipse.paho.mqttv5.client.*
+import org.eclipse.paho.mqttv5.client.MqttClient
+import org.eclipse.paho.mqttv5.client.MqttConnectionOptions
 import org.eclipse.paho.mqttv5.client.persist.MemoryPersistence
-import org.eclipse.paho.mqttv5.common.MqttException
 import org.eclipse.paho.mqttv5.common.MqttMessage
-import org.eclipse.paho.mqttv5.common.packet.MqttProperties
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.StringReader
@@ -23,19 +24,28 @@ import javax.net.ssl.TrustManagerFactory
  * Certificates were generated following guide
  * https://thingsboard.io/docs/pe/user-guide/certificates/
  *
- * Attempting to publish telemetry with X509 authentication. Replicating mosquitto_pub command
- * mosquitto_pub --cafile thingsboard-root.pem -d -q 1 -h "mqtt.thingsboard.cloud" -p "8883" -t "v1/devices/me/telemetry" --key deviceKey.pem --cert chain.pem -m {"temperature":25}
- * NOTE: No Passwords for keys were used.
+ * Replace all *_PATH variables with the locations of the certificates generated on your machine.
+ *
+ * publishes telemetry with X509 authentication. Replicating mosquitto_pub command
+ * mosquitto_pub --cafile ca-root.pem -d -q 1 -h "mqtt.thingsboard.cloud" -p "8883" -t "v1/devices/me/telemetry" --key deviceKey.pem --cert chain.pem -m {"temperature":350}
+ * NOTE: No Passwords for keys were used in this example.
  */
+
+const val DEVICEKEY_PEM_PATH: String = "deviceKey.pem"
+
+const val CERTIFICATE_CHAIN_PATH: String = "chain.pem"
+
+// ca-root provided by thingsboard at https://thingsboard.io/docs/paas/user-guide/resources/mqtt-over-ssl/ca-root.pem
+const val ROOT_CA_PATH: String = "ca-root.pem"
+
 fun main() {
     val broker = "ssl://mqtt.thingsboard.cloud:8883"
 
     // replace file paths with the location of the certificates generated in https://thingsboard.io/docs/pe/user-guide/certificates/
-    val privateKeyPEM = File("deviceKey.pem").readText()
-    val clientCertPEM = File("chain.pem").readText()
+    val privateKeyPEM = File(DEVICEKEY_PEM_PATH).readText()
+    val clientCertPEM = File(CERTIFICATE_CHAIN_PATH).readText()
 
-    // thingsboard certificate provided in guide, renamaed from "ca-cert.pem" in user guide.
-    val caCertPEM = File("thingsboard-root.pem").readText()
+    val caCertPEM = File(ROOT_CA_PATH).readText()
 
     val key = getPrivateKey(privateKeyPEM)
     val clientCert = getCertificate(clientCertPEM)
@@ -44,7 +54,12 @@ fun main() {
     val keyStore = KeyStore.getInstance("PKCS12")
     keyStore.load(null, null)
     keyStore.setCertificateEntry("certificate", clientCert)
-    keyStore.setKeyEntry("private-key", key, null, arrayOf(clientCert))
+
+    // important that the alias used when loading the private key into the keystore is the same that is returned by
+    // [PrivateKeyStrategy] provided to [SSLContext] loadKeyMaterial method.
+    val privateKeyAlias = "private-key-alias"
+
+    keyStore.setKeyEntry(privateKeyAlias, key, null, arrayOf(clientCert))
 
     val trustStore = KeyStore.getInstance("PKCS12")
     trustStore.load(null, null)
@@ -56,43 +71,21 @@ fun main() {
     val trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
     trustManagerFactory.init(trustStore)
 
-    val sslContext = SSLContext.getInstance("TLSv1.2")
-    sslContext.init(keyManagerFactory.keyManagers, trustManagerFactory.trustManagers, null)
+    // Use org.apache.httpcomponents to construct SSLContext that will use the private key in keystore to
+    // handle 2 way TLS connection.
+    val sslContext: SSLContext = SSLContexts.custom()
+        .loadKeyMaterial(
+            keyStore, null
+        ) { p0, p1 -> privateKeyAlias }
+        .loadTrustMaterial(trustStore, null)
+        .build()
 
     try {
         val mqttOpts = MqttConnectionOptions()
+        // override default socket factory to handle 2 way TLS Connection.
         mqttOpts.socketFactory = sslContext.socketFactory
-        mqttOpts.setAutomaticReconnect(true)
-        mqttOpts.setKeepAliveInterval(10000)
-        mqttOpts.setConnectionTimeout(30)
 
         val client = MqttClient(broker, null, MemoryPersistence())
-
-        client.setCallback(object : MqttCallback {
-            override fun disconnected(disconnectResponse: MqttDisconnectResponse) {
-                println("Disconnected!")
-            }
-
-            override fun mqttErrorOccurred(exception: MqttException) {
-                println("Disconnected!")
-            }
-
-            override fun messageArrived(topic: String, message: MqttMessage) {
-                println("Message Arrived!")
-            }
-
-            override fun deliveryComplete(p0: IMqttToken?) {
-                println("Delivery Complete!")
-            }
-
-            override fun connectComplete(reconnect: Boolean, serverURI: String) {
-                println("Disconnected!")
-            }
-
-            override fun authPacketArrived(auth: Int, mqttAuth: MqttProperties) {
-                println("Auth Packed Arrived!")
-            }
-        })
 
         client.connect(mqttOpts)
 

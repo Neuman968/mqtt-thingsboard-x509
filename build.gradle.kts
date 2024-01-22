@@ -15,6 +15,9 @@ repositories {
 dependencies {
     implementation("ch.qos.logback:logback-classic:$logback_version")
 
+
+    implementation("org.apache.httpcomponents:httpclient:4.5.14")
+
     implementation("org.bouncycastle:bcprov-jdk15on:1.70")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
     implementation("org.eclipse.paho:org.eclipse.paho.mqttv5.client:1.2.5")
